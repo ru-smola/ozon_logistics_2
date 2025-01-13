@@ -68,6 +68,17 @@ def process_file_pair(file1, file2):
     # Load supplied goods for the date of the newer file
     supplied_goods = load_supplied_goods(date_newer)
 
+    # Ensure all pairs from the old file are present in the new file
+    df2 = pd.merge(
+        df1[["SKU", "Название склада", "Артикул", "Название товара"]],
+        df2,
+        on=["SKU", "Название склада", "Артикул", "Название товара"],
+        how="left"
+    )
+
+    # Fill missing values in "Доступный к продаже товар" with 0
+    df2["Доступный к продаже товар"] = df2["Доступный к продаже товар"].fillna(0)
+
     # Merge data on SKU and warehouse
     merged = pd.merge(
         df1, df2,
@@ -140,3 +151,4 @@ if __name__ == "__main__":
     elif choice == "1":
         for pair in pairs:
             process_file_pair(pair[0], pair[1])
+

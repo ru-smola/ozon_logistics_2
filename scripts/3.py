@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+# Этот скрипт вычисляет разницу в днях между парами файлов, сопоставленными на предыдущем этапе, и дописывает в found-pairs-дата.txt в папке ОТЧЁТЫ.
+
 import os
 from datetime import datetime
 

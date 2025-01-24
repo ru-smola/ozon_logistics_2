@@ -1,61 +1,83 @@
 #!/usr/bin/env python3
 
-# Этот скрипт вычисляет точку поставки, то есть ПРИ КАКОМ ОСТАТКЕ пора поставлять товар
+# скрипт копирует усреднённое потребление, полученное на предыдущем этапе, и создаёт "гипотезы" для отсутствующих товаров.
 
 import os
 import pandas as pd
 from datetime import datetime
 
-# Constants
-WAREHOUSES_FILE = "warehouses.xlsx"
-AVERAGE_FILE = "СТАТИСТИКА/00-Усреднённое-14-дней.xlsx"
-OUTPUT_FILE = "точки-поставки.xlsx"
+# Константы
+STATS_FOLDER = "СТАТИСТИКА"
+ARCHIVE_FOLDER = os.path.join(STATS_FOLDER, "Архив статистики")
+SOURCE_FILE = os.path.join(STATS_FOLDER, "00-Усреднённое-14-дней.xlsx")
+TARGET_FILE = os.path.join(STATS_FOLDER, "00-Гипотетическое.xlsx")
+DATE_FORMAT = "%Y%m%d%H%M%S"
 
-# Step 1: Load warehouse delivery times
-if not os.path.exists(WAREHOUSES_FILE):
-    print(f"Файл со сроками поставки не найден: {WAREHOUSES_FILE}")
+# Убедимся, что папки существуют
+os.makedirs(STATS_FOLDER, exist_ok=True)
+os.makedirs(ARCHIVE_FOLDER, exist_ok=True)
+
+# Проверяем наличие исходного файла
+if not os.path.exists(SOURCE_FILE):
+    print(f"Исходный файл {SOURCE_FILE} не найден.")
     exit()
 
+# Шаг 1: Перемещение существующего файла 00-Гипотетическое.xlsx в архив
+if os.path.exists(TARGET_FILE):
+    timestamp = datetime.now().strftime(DATE_FORMAT)
+    archived_file = os.path.join(ARCHIVE_FOLDER, f"00-Гипотетическое-{timestamp}.xlsx")
+    os.rename(TARGET_FILE, archived_file)
+    print(f"Старый файл {TARGET_FILE} перемещён в архив как {archived_file}.")
+
+# Шаг 2: Чтение исходного файла
 try:
-    warehouses_df = pd.read_excel(WAREHOUSES_FILE)
-    if not {"Название склада", "Срок поставки"}.issubset(warehouses_df.columns):
-        print("Отсутствуют необходимые колонки в файле warehouses.xlsx. Требуются: 'Название склада', 'Срок поставки'.")
-        exit()
+    df = pd.read_excel(SOURCE_FILE)
+    print(f"Файл {SOURCE_FILE} успешно прочитан.")
 except Exception as e:
-    print(f"Ошибка чтения файла warehouses.xlsx: {e}")
+    print(f"Ошибка чтения файла {SOURCE_FILE}: {e}")
     exit()
 
-# Step 2: Load average daily consumption
-if not os.path.exists(AVERAGE_FILE):
-    print(f"Файл с усреднённым потреблением не найден: {AVERAGE_FILE}")
-    exit()
+# Добавляем колонку "Статус" со значением "Статистика"
+df["Статус"] = "Статистика"
 
+# Шаг 3: Дополнение отсутствующими парами склад-товар
+# Получаем уникальные склады и товары
+unique_warehouses = df["Название склада"].unique()
+unique_items = df["Артикул"].unique()
+
+# Создаем DataFrame с уникальными комбинациями складов и товаров
+warehouse_item_combinations = pd.DataFrame(
+    [(warehouse, item) for warehouse in unique_warehouses for item in unique_items],
+    columns=["Название склада", "Артикул"]
+)
+
+# Объединяем с исходным DataFrame по складу и артикулу
+merged_df = warehouse_item_combinations.merge(
+    df,
+    on=["Название склада", "Артикул"],
+    how="left"
+)
+
+# Заполняем отсутствующие строки
+missing_rows = merged_df[merged_df["Название товара"].isna()].copy()
+
+# Вычисляем среднее значение потребления для каждого артикула (по всем складам)
+item_mean_consumption = df.groupby("Артикул")["Усредненное ежедневное потребление"].mean()
+
+# Добавляем недостающие данные в строки с гипотезами
+missing_rows["Название товара"] = missing_rows["Артикул"].map(
+    df.drop_duplicates("Артикул").set_index("Артикул")["Название товара"]
+)
+missing_rows["Усредненное ежедневное потребление"] = missing_rows["Артикул"].map(item_mean_consumption)
+missing_rows["Статус"] = "Гипотеза"
+
+# Объединяем исходные данные с дополненными строками
+final_df = pd.concat([df, missing_rows], ignore_index=True)
+
+# Сохраняем результат в новый файл
 try:
-    average_df = pd.read_excel(AVERAGE_FILE)
-    if not {"SKU", "Название склада", "Артикул", "Название товара", "Усредненное ежедневное потребление"}.issubset(average_df.columns):
-        print("Отсутствуют необходимые колонки в файле с усреднённым потреблением. Требуются: 'SKU', 'Название склада', 'Артикул', 'Название товара', 'Усредненное ежедневное потребление'.")
-        exit()
+    final_df.to_excel(TARGET_FILE, index=False)
+    print(f"Файл успешно сохранён как {TARGET_FILE}.")
 except Exception as e:
-    print(f"Ошибка чтения файла с усреднённым потреблением: {e}")
-    exit()
-
-# Step 3: Merge data
-merged_df = pd.merge(average_df, warehouses_df, on="Название склада", how="left")
-
-if merged_df["Срок поставки"].isnull().any():
-    print("Некоторые склады из усреднённого отчёта отсутствуют в файле warehouses.xlsx. Проверьте данные.")
-
-# Step 4: Calculate supply points
-merged_df["Рекомендованная точка поставки"] = merged_df["Усредненное ежедневное потребление"] * merged_df["Срок поставки"]
-
-# Step 5: Save the result
-try:
-    merged_df = merged_df[[
-        "SKU", "Название склада", "Артикул", "Название товара", 
-        "Усредненное ежедневное потребление", "Срок поставки", "Рекомендованная точка поставки"
-    ]]
-    merged_df.to_excel(OUTPUT_FILE, index=False)
-    print(f"Рекомендованные точки поставки сохранены в файл: {OUTPUT_FILE}")
-except Exception as e:
-    print(f"Ошибка сохранения файла с точками поставки: {e}")
+    print(f"Ошибка сохранения файла {TARGET_FILE}: {e}")
 

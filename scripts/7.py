@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Этот скрипт вычисляет среднее за 14 или 30 дней (по выбору пользователя) потребление исходя из нормализованных цифр, полученных на предыдущем этапе
+# Этот скрипт вычисляет среднее за 14 дней потребление исходя из нормализованных цифр, полученных на предыдущем этапе
 
 import os
 import pandas as pd
@@ -10,27 +10,12 @@ from datetime import datetime
 STATS_FOLDER = "СТАТИСТИКА"
 ARCHIVE_FOLDER = os.path.join(STATS_FOLDER, "Архив статистики")
 DATE_FORMAT = "%d.%m.%Y"
+DAYS = 14  # Анализируемый период в днях
+OUTPUT_FILE = os.path.join(STATS_FOLDER, "00-Усреднённое-14-дней.xlsx")
 
 # Ensure output and archive folders exist
 os.makedirs(STATS_FOLDER, exist_ok=True)
 os.makedirs(ARCHIVE_FOLDER, exist_ok=True)
-
-# Ask user for the analysis period
-choice = input("Выполнять анализ за 30 дней или 14 дней? (1 - 14, 2 - 30): ").strip()
-if choice not in ["1", "2"]:
-    print("Неверный выбор. Завершение работы.")
-    exit()
-if choice == "0":
-    print("Анализ за 30 дней отменён.")
-    exit()
-
-# Define the output file based on the choice
-if choice == "1":
-    OUTPUT_FILE = os.path.join(STATS_FOLDER, "00-Усреднённое-14-дней.xlsx")
-    DAYS = 14
-else:
-    OUTPUT_FILE = os.path.join(STATS_FOLDER, "01-Усреднённое-30-дней.xlsx")
-    DAYS = 30
 
 # Step 1: Collect the latest reports
 files = [

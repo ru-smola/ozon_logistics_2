@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Этот скрипт вычисляет среднее за 14 дней потребление исходя из нормализованных цифр, полученных на предыдущем этапе
+# Этот скрипт вычисляет скользящее среднее за 10 дней потребления
 
 import os
 import pandas as pd
@@ -10,41 +10,37 @@ from datetime import datetime
 STATS_FOLDER = "СТАТИСТИКА"
 ARCHIVE_FOLDER = os.path.join(STATS_FOLDER, "Архив статистики")
 DATE_FORMAT = "%d.%m.%Y"
-DAYS = 14  # Анализируемый период в днях
-OUTPUT_FILE = os.path.join(STATS_FOLDER, "00-Усреднённое-14-дней.xlsx")
+WINDOW_SIZE = 10  # Размер окна для скользящего среднего
+OUTPUT_FILE = os.path.join(STATS_FOLDER, "00-Скользящее-среднее-10-дней.xlsx")
 
 # Ensure output and archive folders exist
 os.makedirs(STATS_FOLDER, exist_ok=True)
 os.makedirs(ARCHIVE_FOLDER, exist_ok=True)
 
-# Step 1: Collect the latest reports
+# Step 1: Collect historical reports
 files = [
     f for f in os.listdir(STATS_FOLDER)
     if f.startswith("нормализованное-потребление-") and f.endswith(".xlsx")
 ]
+
+# Sort files by date
 files.sort(
-    key=lambda x: datetime.strptime(x.replace("нормализованное-потребление-", "").replace(".xlsx", ""), DATE_FORMAT),
-    reverse=True
+    key=lambda x: datetime.strptime(x.replace("нормализованное-потребление-", "").replace(".xlsx", ""), DATE_FORMAT)
 )
-latest_files = files[:DAYS]
 
-# Warn user if fewer than the required reports are available
-if len(latest_files) < DAYS:
-    print(f"Отчётов менее {DAYS}, статистика может быть ненадёжной.")
-
-if not latest_files:
-    print("Нет доступных отчётов для обработки.")
-    exit()
-
-# Step 2: Combine data and calculate averages
+# Step 2: Prepare data for MA calculation
 all_data = []
-for file in latest_files:
+for file in files:
     file_path = os.path.join(STATS_FOLDER, file)
     try:
         df = pd.read_excel(file_path)
         if not {"SKU", "Название склада", "Артикул", "Название товара", "Ежедневное потребление"}.issubset(df.columns):
-            print(f"Пропущен файл из-за отсутствия необходимых колонок: {file}")
             continue
+        
+        # Extract date from filename
+        date_str = file.replace("нормализованное-потребление-", "").replace(".xlsx", "")
+        df["Дата"] = datetime.strptime(date_str, DATE_FORMAT)
+        
         all_data.append(df)
     except Exception as e:
         print(f"Ошибка чтения файла {file}: {e}")
@@ -53,29 +49,40 @@ if not all_data:
     print("Нет данных для обработки.")
     exit()
 
-# Concatenate all data and calculate the average consumption
+# Combine all data
 combined_df = pd.concat(all_data, ignore_index=True)
-average_df = combined_df.groupby([
+
+# Step 3: Calculate rolling average
+def calculate_ma(group):
+    return group.sort_values('Дата').rolling(
+        window=WINDOW_SIZE,
+        min_periods=1,
+        on='Дата'
+    )['Ежедневное потребление'].mean().iloc[-1]
+
+# Group and apply MA calculation
+result_df = combined_df.groupby([
     "SKU", "Название склада", "Артикул", "Название товара"
-], as_index=False).agg({
-    "Ежедневное потребление": "mean"
-})
-average_df.rename(columns={"Ежедневное потребление": "Усредненное ежедневное потребление"}, inplace=True)
+], as_index=False).apply(calculate_ma).reset_index()
 
-# Sort by "Название склада"
-average_df.sort_values(by="Название склада", inplace=True)
+result_df.columns = [
+    "SKU", "Название склада", "Артикул", "Название товара",
+    f"Скользящее среднее ({WINDOW_SIZE} дней)"
+]
 
-# Step 3: Handle existing file in the stats folder
+# Sort by warehouse name
+result_df.sort_values(by="Название склада", inplace=True)
+
+# Step 4: Handle existing file
 if os.path.exists(OUTPUT_FILE):
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     archive_file = os.path.join(ARCHIVE_FOLDER, os.path.basename(OUTPUT_FILE).replace(".xlsx", f"-{timestamp}.xlsx"))
     os.rename(OUTPUT_FILE, archive_file)
     print(f"Старый отчёт перемещён в архив: {archive_file}")
 
-# Step 4: Save the new averaged report
+# Step 5: Save new report
 try:
-    average_df.to_excel(OUTPUT_FILE, index=False)
-    print(f"Усреднённый отчёт сохранён: {OUTPUT_FILE}")
+    result_df.to_excel(OUTPUT_FILE, index=False)
+    print(f"Отчёт со скользящим средним сохранён: {OUTPUT_FILE}")
 except Exception as e:
     print(f"Ошибка сохранения отчёта: {e}")
-

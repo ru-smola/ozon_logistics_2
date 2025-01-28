@@ -9,7 +9,7 @@ from datetime import datetime
 # Константы
 STATS_FOLDER = "СТАТИСТИКА"
 ARCHIVE_FOLDER = os.path.join(STATS_FOLDER, "Архив статистики")
-SOURCE_FILE = os.path.join(STATS_FOLDER, "00-Усреднённое-14-дней.xlsx")
+SOURCE_FILE = os.path.join(STATS_FOLDER, "00-Скользящее-среднее-10-дней.xlsx")
 TARGET_FILE = os.path.join(STATS_FOLDER, "00-Гипотетическое.xlsx")
 DATE_FORMAT = "%Y%m%d%H%M%S"
 

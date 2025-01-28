@@ -1,61 +1,63 @@
 #!/usr/bin/env python3
 
-# Этот скрипт вычисляет точку поставки, то есть ПРИ КАКОМ ОСТАТКЕ пора поставлять товар
+# Этот скрипт вычисляет интервал между поставками, основываясь на доле каждого склада в выручке и сроке доставки до него.
 
 import os
 import pandas as pd
-from datetime import datetime
+import math
 
 # Constants
 WAREHOUSES_FILE = "warehouses.xlsx"
-AVERAGE_FILE = "СТАТИСТИКА/00-Усреднённое-14-дней.xlsx"
-OUTPUT_FILE = "точки-поставки.xlsx"
 
-# Step 1: Load warehouse delivery times
+# Check if file exists
 if not os.path.exists(WAREHOUSES_FILE):
-    print(f"Файл со сроками поставки не найден: {WAREHOUSES_FILE}")
+    print(f"Файл {WAREHOUSES_FILE} не найден.")
     exit()
 
 try:
-    warehouses_df = pd.read_excel(WAREHOUSES_FILE)
-    if not {"Название склада", "Срок поставки"}.issubset(warehouses_df.columns):
-        print("Отсутствуют необходимые колонки в файле warehouses.xlsx. Требуются: 'Название склада', 'Срок поставки'.")
+    # Load data from the file
+    df = pd.read_excel(WAREHOUSES_FILE)
+
+    # Ensure required columns exist
+    if not {"Название склада", "Рейтинг склада"}.issubset(df.columns):
+        print("Файл должен содержать колонки 'Название склада' и 'Рейтинг склада'.")
         exit()
+
+    # Calculate total rating
+    total_rating = df["Рейтинг склада"].sum()
+
+    # Add "Суммарный рейтинг" column
+    df["Суммарный рейтинг"] = ""
+    if total_rating > 0:
+        df.loc[0, "Суммарный рейтинг"] = total_rating
+
+    # Add "Доля в рейтинге" column
+    df["Доля в рейтинге"] = df["Рейтинг склада"] / total_rating
+
+    # Define the total number of shipments per month
+    TOTAL_SHIPMENTS_PER_MONTH = 35
+
+    # Add "Поставок в месяц" column
+    df["Поставок в месяц"] = (TOTAL_SHIPMENTS_PER_MONTH * df["Доля в рейтинге"]).apply(lambda x: math.ceil(x) if x > 0 else 0)
+
+    # Define the average number of working days in a month
+    WORKING_DAYS_PER_MONTH = 20.65
+
+    # Add "Рабочих дней между поставками" column
+    df["Рабочих дней между поставками"] = df["Поставок в месяц"].apply(
+        lambda x: math.ceil(WORKING_DAYS_PER_MONTH / x) if x > 0 else 0
+    )
+
+    # Add "Календарных дней между поставками" column
+    CALENDAR_DAYS_PER_MONTH = 30
+    df["Календарных дней между поставками"] = df["Поставок в месяц"].apply(
+        lambda x: math.ceil(CALENDAR_DAYS_PER_MONTH / x) if x > 0 else 0
+    )
+
+    # Save updated data back to the same file
+    df.to_excel(WAREHOUSES_FILE, index=False)
+    print(f"Файл {WAREHOUSES_FILE} обновлён.")
+
 except Exception as e:
-    print(f"Ошибка чтения файла warehouses.xlsx: {e}")
-    exit()
-
-# Step 2: Load average daily consumption
-if not os.path.exists(AVERAGE_FILE):
-    print(f"Файл с усреднённым потреблением не найден: {AVERAGE_FILE}")
-    exit()
-
-try:
-    average_df = pd.read_excel(AVERAGE_FILE)
-    if not {"SKU", "Название склада", "Артикул", "Название товара", "Усредненное ежедневное потребление"}.issubset(average_df.columns):
-        print("Отсутствуют необходимые колонки в файле с усреднённым потреблением. Требуются: 'SKU', 'Название склада', 'Артикул', 'Название товара', 'Усредненное ежедневное потребление'.")
-        exit()
-except Exception as e:
-    print(f"Ошибка чтения файла с усреднённым потреблением: {e}")
-    exit()
-
-# Step 3: Merge data
-merged_df = pd.merge(average_df, warehouses_df, on="Название склада", how="left")
-
-if merged_df["Срок поставки"].isnull().any():
-    print("Некоторые склады из усреднённого отчёта отсутствуют в файле warehouses.xlsx. Проверьте данные.")
-
-# Step 4: Calculate supply points
-merged_df["Рекомендованная точка поставки"] = merged_df["Усредненное ежедневное потребление"] * merged_df["Срок поставки"] + 2
-
-# Step 5: Save the result
-try:
-    merged_df = merged_df[[
-        "SKU", "Название склада", "Артикул", "Название товара", 
-        "Усредненное ежедневное потребление", "Срок поставки", "Рекомендованная точка поставки"
-    ]]
-    merged_df.to_excel(OUTPUT_FILE, index=False)
-    print(f"Рекомендованные точки поставки сохранены в файл: {OUTPUT_FILE}")
-except Exception as e:
-    print(f"Ошибка сохранения файла с точками поставки: {e}")
+    print(f"Ошибка обработки файла: {e}")
 

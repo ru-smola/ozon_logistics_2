@@ -1,131 +1,64 @@
 #!/usr/bin/env python3
 
-import pandas as pd
-from datetime import datetime, timedelta
 import os
+import pandas as pd
+import numpy as np
 
 # Constants
-WAREHOUSES_FILE = "warehouses.xlsx"
-OUTPUT_HTML = "supply_calendar.html"
+RATING_FILE = "Сводный-рейтинг.xlsx"
+OUTPUT_FILE = "ОЖЗ.xlsx"
 
-# Check if the warehouses file exists
-if not os.path.exists(WAREHOUSES_FILE):
-    print(f"Файл {WAREHOUSES_FILE} не найден.")
-    exit()
+# Step 1: Load data
+if not os.path.exists(RATING_FILE):
+    raise FileNotFoundError(f"Файл с рейтингом не найден: {RATING_FILE}")
 
-# Load the warehouse data
+rating_df = pd.read_excel(RATING_FILE)
+
+# Ensure necessary columns are present
+required_columns = {
+    "Название склада", "Артикул", "Усредненное ежедневное потребление", 
+    "Календарных дней между поставками", "Статус", "Рейтинг склада"
+}
+
+if not required_columns.issubset(rating_df.columns):
+    raise ValueError(f"Файл {RATING_FILE} должен содержать колонки: {required_columns}")
+
+# Step 2: Calculate ТЗ (Текущий запас)
+rating_df["Текущий запас"] = (
+    rating_df["Усредненное ежедневное потребление"] * rating_df["Календарных дней между поставками"]
+)
+
+# Step 3: Calculate СЗ (Страховой запас)
+def calculate_safety_stock(daily_consumption, lead_time_days):
+    return daily_consumption * np.sqrt(lead_time_days) * 0.85
+
+rating_df["Страховой запас"] = rating_df.apply(
+    lambda row: calculate_safety_stock(row["Усредненное ежедневное потребление"], row["Календарных дней между поставками"]),
+    axis=1
+)
+
+# Step 4: Calculate ОЖЗ (Общий желаемый запас)
+rating_df["Общий желаемый запас"] = (
+    rating_df["Текущий запас"]# + rating_df["Страховой запас"]
+).round(0)
+
+print("Страховой запас сейчас отключен, так как есть дефицит товара")
+
+# Step 5: Save result to Excel
+output_columns = [
+    "Название склада", "Артикул", "Усредненное ежедневное потребление", 
+    "Календарных дней между поставками", "Текущий запас", "Страховой запас", "Общий желаемый запас",
+    "Статус", "Рейтинг склада"
+]
+
+result_df = rating_df[output_columns]
+
+# Sort by warehouse rating
+result_df.sort_values(by="Рейтинг склада", ascending=False, inplace=True)
+
 try:
-    warehouses_df = pd.read_excel(WAREHOUSES_FILE)
+    result_df.to_excel(OUTPUT_FILE, index=False)
+    print(f"Файл 'ОЖЗ.xlsx' успешно сформирован и сохранён по пути: {OUTPUT_FILE}")
 except Exception as e:
-    print(f"Ошибка чтения файла {WAREHOUSES_FILE}: {e}")
-    exit()
-
-# Ensure the required columns exist
-required_columns = {"Название склада", "Календарных дней между поставками"}
-if not required_columns.issubset(warehouses_df.columns):
-    print(f"Файл должен содержать колонки: {', '.join(required_columns)}.")
-    exit()
-
-# HTML calendar template
-html_template = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Supply Calendar</title>
-    <style>
-        table {{ border-collapse: collapse; width: 100%; }}
-        th, td {{ border: 1px solid black; padding: 8px; text-align: center; }}
-        th {{ background-color: #f2f2f2; }}
-        .weekend {{ background-color: #f9c2c2; }} /* Highlight weekends in light red */
-        .empty {{ background-color: #e0e0e0; }} /* Highlight non-existent dates in gray */
-    </style>
-</head>
-<body>
-    <h1>Календарь поставок</h1>
-    <table>
-        <thead>
-            <tr>
-                <th>День</th>
-                <th>День недели</th>
-                <th>Январь</th>
-                <th>Февраль</th>
-                <th>Март</th>
-            </tr>
-        </thead>
-        <tbody>
-            {rows}
-        </tbody>
-    </table>
-</body>
-</html>
-"""
-
-# Prepare calendar data structure
-calendar_data = {month: {} for month in range(1, 4)}  # For January, February, March
-start_date = datetime(datetime.now().year, 1, 1)
-end_date = datetime(datetime.now().year, 3, 31)
-
-current_date = start_date
-while current_date <= end_date:
-    month = current_date.month
-    day = current_date.day
-    calendar_data[month][day] = {"day_name": current_date.strftime("%A"), "warehouses": []}
-    current_date += timedelta(days=1)
-
-# Assign warehouses to calendar days
-for _, row in warehouses_df.iterrows():
-    warehouse = row["Название склада"]
-    interval_days = row.get("Календарных дней между поставками", 0)
-
-    # Validate interval_days
-    if pd.isna(interval_days) or interval_days <= 0:
-        print(f"Некорректный интервал дней для склада '{warehouse}': {interval_days}. Пропуск.")
-        continue
-
-    interval_days = int(interval_days)
-    current_date = start_date
-
-    while current_date <= end_date:
-        if current_date.weekday() >= 5:  # Skip weekends
-            current_date += timedelta(days=1)
-            continue
-
-        month = current_date.month
-        day = current_date.day
-
-        # Add warehouse to the calendar if space is available
-        if len(calendar_data[month][day]["warehouses"]) < 2:
-            calendar_data[month][day]["warehouses"].append(warehouse)
-
-        # Move to the next scheduled date for this warehouse
-        current_date += timedelta(days=interval_days)
-
-# Generate HTML rows for the calendar
-rows = ""
-for day in range(1, 32):  # Maximum possible days in a month
-    row = f"<tr><td>{day}</td><td></td>"
-    for month in range(1, 4):  # For January, February, March
-        if day in calendar_data[month]:
-            day_data = calendar_data[month][day]
-            day_name = day_data["day_name"]
-            warehouses = ", ".join(day_data["warehouses"])
-            class_attr = "weekend" if day_name in ["Saturday", "Sunday"] else ""
-            row += f'<td class="{class_attr}">{warehouses}</td>'
-        else:
-            row += '<td class="empty"></td>'  # Non-existent dates
-    row += "</tr>"
-    rows += row
-
-# Insert rows into the HTML template
-html_content = html_template.format(rows=rows)
-
-# Save the HTML to file
-try:
-    with open(OUTPUT_HTML, "w", encoding="utf-8") as file:
-        file.write(html_content)
-    print(f"Календарь поставок успешно сохранён: {OUTPUT_HTML}")
-except Exception as e:
-    print(f"Ошибка сохранения HTML файла: {e}")
+    print(f"Ошибка сохранения файла: {e}")
 

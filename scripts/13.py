@@ -34,11 +34,32 @@ try:
     # Add "Доля в рейтинге" column
     df["Доля в рейтинге"] = df["Рейтинг склада"] / total_rating
 
-    # Define the total number of shipments per month
-    TOTAL_SHIPMENTS_PER_MONTH = 35
+    # Sort by "Доля в рейтинге" and split into priority and secondary groups
+    df.sort_values(by="Доля в рейтинге", ascending=False, inplace=True)
+    df.reset_index(drop=True, inplace=True)
 
-    # Add "Поставок в месяц" column
-    df["Поставок в месяц"] = (TOTAL_SHIPMENTS_PER_MONTH * df["Доля в рейтинге"]).apply(lambda x: math.ceil(x) if x > 0 else 0)
+    priority_group = df.iloc[:11]  # Top 11 warehouses
+    secondary_group = df.iloc[11:]  # Remaining warehouses
+
+    # Define shipments allocation
+    TOTAL_SHIPMENTS = 40
+    PRIORITY_SHIPMENTS = 30
+    SECONDARY_SHIPMENTS = 10
+
+    # Calculate shipments per month for priority group
+    priority_total_rating = priority_group["Рейтинг склада"].sum()
+    priority_group["Поставок в месяц"] = (
+        PRIORITY_SHIPMENTS * priority_group["Рейтинг склада"] / priority_total_rating
+    ).apply(lambda x: math.ceil(x) if x > 0 else 0)
+
+    # Calculate shipments per month for secondary group
+    secondary_total_rating = secondary_group["Рейтинг склада"].sum()
+    secondary_group["Поставок в месяц"] = (
+        SECONDARY_SHIPMENTS * secondary_group["Рейтинг склада"] / secondary_total_rating
+    ).apply(lambda x: math.ceil(x) if x > 0 else 0)
+
+    # Combine the groups back into one DataFrame
+    df = pd.concat([priority_group, secondary_group], ignore_index=True)
 
     # Define the average number of working days in a month
     WORKING_DAYS_PER_MONTH = 20.65

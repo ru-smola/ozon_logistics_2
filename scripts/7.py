@@ -54,20 +54,29 @@ combined_df = pd.concat(all_data, ignore_index=True)
 
 # Step 3: Calculate rolling average
 def calculate_ma(group):
-    return group.sort_values('Дата').rolling(
-        window=WINDOW_SIZE,
-        min_periods=1,
-        on='Дата'
-    )['Ежедневное потребление'].mean().iloc[-1]
+    group = group.sort_values('Дата')
+    group["Усредненное ежедневное потребление"] = (
+        group['Ежедневное потребление']
+        .rolling(window=WINDOW_SIZE, min_periods=1)
+        .mean()
+    )
+    return group
 
-# Group and apply MA calculation
-result_df = combined_df.groupby([
-    "SKU", "Название склада", "Артикул", "Название товара"
-], as_index=False).apply(calculate_ma).reset_index()
+# Group and calculate rolling average
+result_df = combined_df.groupby(
+    ["SKU", "Название склада", "Артикул", "Название товара"],
+    as_index=False,
+).apply(calculate_ma).reset_index(drop=True)
 
-result_df.columns = [
-    "SKU", "Название склада", "Артикул", "Название товара",
-    f"Скользящее среднее ({WINDOW_SIZE} дней)"
+# Drop duplicates and keep only the last date's rolling average for each group
+result_df = result_df.sort_values("Дата").drop_duplicates(
+    subset=["SKU", "Название склада", "Артикул", "Название товара"],
+    keep="last"
+)
+
+# Keep only relevant columns
+result_df = result_df[
+    ["SKU", "Название склада", "Артикул", "Название товара", "Усредненное ежедневное потребление"]
 ]
 
 # Sort by warehouse name
@@ -86,3 +95,4 @@ try:
     print(f"Отчёт со скользящим средним сохранён: {OUTPUT_FILE}")
 except Exception as e:
     print(f"Ошибка сохранения отчёта: {e}")
+

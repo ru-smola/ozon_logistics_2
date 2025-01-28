@@ -11,20 +11,39 @@ import shutil
 PRIORITY_FILE = "Приоритет.xlsx"
 SUPPLY_FILE = "Можно-поставить.xlsx"
 ITEM_RATINGS_FILE = "Рейтинг-товаров.xlsx"
+WAREHOUSES_FILE = "warehouses.xlsx"
 OUTPUT_FOLDER = "./"
 ARCHIVE_FOLDER = "АРХИВ ПОСТАВОК"
 
-# Step 1: Load priority file
+# Step 1: Load priority and warehouse files
 if not os.path.exists(PRIORITY_FILE):
     raise FileNotFoundError(f"Файл {PRIORITY_FILE} не найден.")
+if not os.path.exists(WAREHOUSES_FILE):
+    raise FileNotFoundError(f"Файл {WAREHOUSES_FILE} не найден.")
 
 priority_df = pd.read_excel(PRIORITY_FILE)
+warehouses_df = pd.read_excel(WAREHOUSES_FILE)
+
+required_warehouse_columns = {
+    "Название склада",
+    "Поставок в месяц",
+    "Рабочих дней между поставками",
+    "Календарных дней между поставками",
+}
+if not required_warehouse_columns.issubset(warehouses_df.columns):
+    raise ValueError(f"Файл {WAREHOUSES_FILE} должен содержать колонки: {required_warehouse_columns}")
+
+priority_df = priority_df.merge(
+    warehouses_df[["Название склада", "Поставок в месяц", "Рабочих дней между поставками", "Календарных дней между поставками"]],
+    on="Название склада",
+    how="left",
+)
 
 if "Название склада" not in priority_df.columns:
     raise ValueError("Файл Приоритет.xlsx должен содержать колонку 'Название склада'.")
 
-# Get the sorted list of warehouses by priority
-warehouses = priority_df["Название склада"].tolist()
+# Get the sorted list of warehouses with all relevant data
+warehouses = priority_df.to_dict(orient="records")
 
 # Step 2: Prepare output file name and archive old drafts
 current_date = datetime.now().strftime("%d.%m.%Y")
@@ -58,7 +77,13 @@ if not {"Артикул", "Рейтинг товара"}.issubset(item_ratings_d
 wb = Workbook()
 del wb[wb.active.title]  # Remove default sheet
 
-for warehouse in warehouses:
+for warehouse_info in warehouses:
+    warehouse = warehouse_info["Название склада"]
+    priority = warehouse_info["Приоритет"]
+    shipments_per_month = warehouse_info["Поставок в месяц"]
+    working_days_between_shipments = warehouse_info["Рабочих дней между поставками"]
+    calendar_days_between_shipments = warehouse_info["Календарных дней между поставками"]
+
     # Filter data for the current warehouse
     warehouse_data = supply_df[supply_df["Название склада"] == warehouse]
 
@@ -68,25 +93,11 @@ for warehouse in warehouses:
         item_ratings_df,
         on="Артикул",
         how="left",
-        suffixes=("_supply", "_item")  # Clear suffixes to avoid confusion
+        suffixes=("", "_item")  # Manage suffixes to avoid confusion
     )
 
-    # Rename columns explicitly
-    warehouse_data.rename(
-        columns={
-            "Название склада_supply": "Название склада",
-            "Статус_supply": "Статус",
-        },
-        inplace=True,
-    )
-
-    # Select only the necessary columns after renaming
-    warehouse_data = warehouse_data[[
-        "Артикул",
-        "Требуется поставить",
-        "Статус",
-        "Рейтинг товара"
-    ]]
+    # Remove duplicates (keep the first occurrence)
+    warehouse_data.drop_duplicates(subset=["Артикул"], keep="first", inplace=True)
 
     # Fill missing ratings with 0
     warehouse_data["Рейтинг товара"] = warehouse_data["Рейтинг товара"].fillna(0)
@@ -96,6 +107,13 @@ for warehouse in warehouses:
 
     # Create a new sheet for the warehouse
     ws = wb.create_sheet(title=warehouse[:31])  # Sheet name max length is 31 characters
+
+    # Write warehouse details
+    ws.append([f"Приоритет этого склада: {priority}"])
+    ws.append([f"Поставок в месяц: {shipments_per_month}"])
+    ws.append([f"Рабочих дней между поставками: {working_days_between_shipments}"])
+    ws.append([f"Календарных дней между поставками: {calendar_days_between_shipments}"])
+    ws.append([])  # Empty row for better readability
 
     # Write headers
     headers = ["Артикул", "Требуется поставить", "Статус", "Рейтинг товара"]
@@ -117,6 +135,12 @@ for warehouse in warehouses:
         elif row["Статус"] == "Гипотеза":
             for cell in ws[last_row]:
                 cell.fill = orange_fill
+
+    # Adjust column widths
+    for col in ws.columns:
+        max_length = max(len(str(cell.value)) for cell in col if cell.value is not None)
+        adjusted_width = max_length + 2  # Add some padding
+        ws.column_dimensions[col[0].column_letter].width = adjusted_width
 
 # Step 5: Save workbook
 wb.save(output_file)

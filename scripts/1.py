@@ -1,45 +1,78 @@
 #!/usr/bin/env python3
 
-# Этот скрипт сортирует и переименовывает файлы xlsx в папке ОСТАТКИ СЮДА, при этом не трогает уже промаркированные файлы (начинаются с "остатки"), любые другие обрабатывает и ищет в ячейке B2 у них дату для переименования
-
 import os
 import pandas as pd
+from datetime import datetime
 
-# Define the folder containing the files
+# Настройки
 folder = "ОСТАТКИ СЮДА"
+required_columns = [
+    'SKU',
+    'Название склада',
+    'Артикул',
+    'Название товара',
+    'Товары в пути',
+    'Доступный к продаже товар'
+]
 
-# Process each file in the folder
-for i, file in enumerate(os.listdir(folder), start=1):
-    # Skip files that are already correctly named
+for file in os.listdir(folder):
     if file.startswith("остатки-") and file.endswith(".xlsx"):
-        print(f"Уже промаркированные файлы ({i}): {file}")
+        print(f"Пропускаем промаркированный файл: {file}")
         continue
 
-    file_path = os.path.join(folder, file)
+    if not file.endswith(".xlsx"):
+        continue
 
-    # Only process .xlsx files
-    if file.endswith(".xlsx"):
+    try:
+        file_path = os.path.join(folder, file)
+        xls = pd.ExcelFile(file_path)
+        
+        if 'Товар-склад' not in xls.sheet_names:
+            print(f"Лист 'Товар-склад' отсутствует в {file}")
+            continue
+            
+        df = pd.read_excel(xls, sheet_name='Товар-склад', header=None)
+        
+        # Извлекаем дату из A1
+        date_str = df.iloc[0, 0].split(": ")[-1].strip()
         try:
-            # Read the file using pandas
-            excel_data = pd.read_excel(file_path, header=None)  # Read without assuming column headers
-
-            # Extract the date from cell B2
-            date_str = excel_data.iloc[1, 1]  # B2 corresponds to row 1, column 1 (0-based index)
-
-            # Ensure the date is in the expected format dd/mm/yyyy
-            try:
-                date = pd.to_datetime(date_str, format="%d/%m/%Y").strftime("%d.%m.%Y")
-            except ValueError:
-                print(f"Формат даты в файле не соответствует {file}: {date_str}. Проверьте файл.")
-                continue
-
-            # Rename the file
-            new_file_name = f"остатки-{date}.xlsx"
-            new_file_path = os.path.join(folder, new_file_name)
-            os.rename(file_path, new_file_path)
-            print(f"Переименовано: {file} -> {new_file_name}")
-
+            date_obj = datetime.strptime(date_str, "%m/%d/%Y")
+            formatted_date = date_obj.strftime("%d.%m.%Y")
         except Exception as e:
-            print(f"Ошибки обработки {file}: {e}")
+            print(f"Ошибка формата даты в {file}: {e}")
+            continue
 
-print("Сортировка по дате и маркировка выполнена.")
+        # Основная обработка данных
+        df = df.drop([0, 1, 3]).reset_index(drop=True)  # Удаляем строки 1,2,4
+        df.columns = df.iloc[0]  # Берем заголовки из первой строки
+        df = df[1:].reset_index(drop=True)  # Удаляем строку с заголовками
+        df['Товары в пути'] = df.iloc[:,7] + df.iloc[:,14] + df.iloc[:,15]
+        df = df.rename(columns={
+            'Доступно к продаже': 'Доступный к продаже товар',
+            'Склад': 'Название склада',
+            'Название': 'Название товара'
+        })
+        df = df[required_columns]
+
+        # Формируем финальную структуру
+        header = pd.DataFrame([df.columns.tolist()], columns=df.columns)  # Заголовки как данные
+        blank_rows = pd.DataFrame([[None]*len(df.columns)]*3, columns=df.columns)  # 3 пустые строки
+        final_df = pd.concat([
+            blank_rows,    # 3 пустые строки
+            header,        # Заголовки в 4-й строке
+            df             # Основные данные
+        ], ignore_index=True)
+
+        # Сохраняем результат
+        new_filename = f"остатки-{formatted_date}.xlsx"
+        save_path = os.path.join(folder, new_filename)
+        
+        with pd.ExcelWriter(save_path, engine='openpyxl') as writer:
+            final_df.to_excel(writer, index=False, header=False, sheet_name='Товар-склад')
+        
+        print(f"Обработан: {file} -> {new_filename}")
+
+    except Exception as e:
+        print(f"Критическая ошибка в {file}: {str(e)}")
+
+print("Все операции завершены!")
